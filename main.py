@@ -116,6 +116,13 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _raise_harmful_prompt_error() -> None:
+    raise HTTPException(
+        status_code=400,
+        detail="This request is harmful or unsafe. I cannot provide a response for it.",
+    )
+
+
 @app.post("/generate-plan", response_model=ExperimentPlan)
 def generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
     try:
@@ -136,7 +143,18 @@ def generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
 
         parsed = response.choices[0].message.parsed
         if parsed is None:
-            raise ValueError("Model did not return parseable structured output.")
+            refusal = getattr(response.choices[0].message, "refusal", None)
+            if refusal:
+                _raise_harmful_prompt_error()
+            raise HTTPException(
+                status_code=502,
+                detail="Model returned an invalid response format. Please retry.",
+            )
         return parsed
+    except HTTPException:
+        raise
     except Exception as exc:
+        message = str(exc)
+        if "content_filter" in message or "ResponsibleAIPolicyViolation" in message:
+            _raise_harmful_prompt_error()
         raise HTTPException(status_code=500, detail=f"Failed to generate plan: {exc}")
