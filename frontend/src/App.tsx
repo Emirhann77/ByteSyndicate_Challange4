@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { ExperimentPlan } from "./types";
-import { createExperimentPlanClient } from "./lib/experimentPlanClient";
+import { generateExperimentPlan } from "./lib/experimentPlanClient";
 
 function formatUsdRange(low: number, high: number) {
   const f = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
@@ -8,8 +8,6 @@ function formatUsdRange(low: number, high: number) {
 }
 
 export function App() {
-  const client = useMemo(() => createExperimentPlanClient(), []);
-
   const [hypothesis, setHypothesis] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +25,7 @@ export function App() {
 
     setIsLoading(true);
     try {
-      const result = await client.generatePlan({ hypothesis: trimmed });
+      const result = await generateExperimentPlan(trimmed);
       setPlan(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to generate plan.";
@@ -53,7 +51,7 @@ export function App() {
             <div className="small">Hackathon demo · hypothesis → experiment plan</div>
           </div>
         </div>
-        <div className="status-pill">Mock mode</div>
+        <div className="status-pill">FastAPI</div>
       </header>
 
       <section className="hero">
@@ -111,8 +109,7 @@ export function App() {
           <div className="card-body">
             {!plan && !isLoading ? (
               <div className="small">
-                Your structured plan will appear here. In the real system, this panel will render the
-                FastAPI response.
+                Your structured plan will appear here.
               </div>
             ) : null}
 
@@ -140,24 +137,32 @@ export function App() {
 
                 <div className="section">
                   <h3>3. Step-by-step Protocol</h3>
-                  <ol className="list">
-                    {plan.protocolSteps.map((s, i) => (
-                      <li key={i}>{s}</li>
-                    ))}
-                  </ol>
+                  {plan.protocolSteps.length ? (
+                    <ol className="list">
+                      {plan.protocolSteps.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="small">—</div>
+                  )}
                 </div>
 
                 <div className="section">
                   <h3>4. Materials / Reagents</h3>
-                  <ul className="list">
-                    {plan.materials.map((m, i) => (
-                      <li key={i}>
-                        <span className="mono">{m.item}</span>
-                        {m.quantity ? <span> — {m.quantity}</span> : null}
-                        {m.notes ? <span className="small"> ({m.notes})</span> : null}
-                      </li>
-                    ))}
-                  </ul>
+                  {plan.materials.length ? (
+                    <ul className="list">
+                      {plan.materials.map((m, i) => (
+                        <li key={i}>
+                          <span className="mono">{m.item}</span>
+                          {m.quantity ? <span> — {m.quantity}</span> : null}
+                          {m.notes ? <span className="small"> ({m.notes})</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="small">—</div>
+                  )}
                 </div>
 
                 <div className="section">
@@ -172,14 +177,18 @@ export function App() {
 
                 <div className="section">
                   <h3>6. Timeline</h3>
-                  <ul className="list">
-                    {plan.timeline.map((t, i) => (
-                      <li key={i}>
-                        <span className="mono">{t.phase}</span> — {t.duration}
-                        <div className="small">Deliverable: {t.deliverable}</div>
-                      </li>
-                    ))}
-                  </ul>
+                  {plan.timeline.length ? (
+                    <ul className="list">
+                      {plan.timeline.map((t, i) => (
+                        <li key={i}>
+                          <span className="mono">{t.phase}</span> — {t.duration}
+                          <div className="small">Deliverable: {t.deliverable}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="small">—</div>
+                  )}
                 </div>
               </>
             ) : null}
