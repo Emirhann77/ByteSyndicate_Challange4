@@ -25,9 +25,30 @@ export type ExperimentPlan = {
     powerNotes: string;
   };
   nextQuestions: string[];
+  evidenceQualityNote: string;
+  literatureReferences: Array<{
+    title: string;
+    journal: string;
+    year: string;
+    pmid: string;
+    relevanceNote: string;
+  }>;
+  controlGroup: {
+    name: string;
+    description: string;
+    intervention: string;
+    sampleSize: string;
+  };
+  experimentalGroup: {
+    name: string;
+    description: string;
+    intervention: string;
+    sampleSize: string;
+  };
 };
 
 export type GeneratePlanRequest = {
   hypothesis: string;
+  useScientificLiterature?: boolean;
 };
 

@@ -15,6 +15,7 @@ type PlanTab = "overview" | "protocol" | "budget" | "risk" | "alternatives";
 
 export function App() {
   const [hypothesis, setHypothesis] = useState("");
+  const [useScientificLiterature, setUseScientificLiterature] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<ExperimentPlan | null>(null);
@@ -32,7 +33,7 @@ export function App() {
 
     setIsLoading(true);
     try {
-      const result = await generateExperimentPlan(trimmed);
+      const result = await generateExperimentPlan(trimmed, useScientificLiterature);
       setPlan(result);
       setActiveTab("overview");
     } catch (e) {
@@ -120,6 +121,15 @@ export function App() {
               <div className="hint">
                 Tip: include intervention, organism/system, measurable endpoint, and constraints.
               </div>
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={useScientificLiterature}
+                  onChange={(e) => setUseScientificLiterature(e.target.checked)}
+                  disabled={isLoading}
+                />
+                <span>Scientific literature grounding</span>
+              </label>
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <button className="btn btn-secondary" type="button" onClick={onUseExample} disabled={isLoading}>
                   Use example
@@ -172,7 +182,7 @@ export function App() {
                 <h3>Generating</h3>
                 <div className="small">
                   Scoring feasibility, drafting protocol, planning staffing, assessing risks, and generating
-                  alternatives…
+                  alternatives{useScientificLiterature ? " with literature grounding" : ""}…
                 </div>
               </div>
             ) : null}
@@ -213,6 +223,19 @@ export function App() {
                       <div>{plan.experimentalDesign}</div>
                     </div>
                     <div className="section">
+                      <h3>Control vs Experimental Group</h3>
+                      <div>
+                        <span className="mono">Control:</span> {plan.controlGroup.description}
+                      </div>
+                      <div className="small">Intervention: {plan.controlGroup.intervention}</div>
+                      <div className="small">Sample size: {plan.controlGroup.sampleSize}</div>
+                      <div style={{ marginTop: 8 }}>
+                        <span className="mono">Experimental:</span> {plan.experimentalGroup.description}
+                      </div>
+                      <div className="small">Intervention: {plan.experimentalGroup.intervention}</div>
+                      <div className="small">Sample size: {plan.experimentalGroup.sampleSize}</div>
+                    </div>
+                    <div className="section">
                       <h3>Feasibility Rationale</h3>
                       <ul className="list">
                         {plan.feasibilityRationale.map((item, index) => (
@@ -231,11 +254,46 @@ export function App() {
                         ))}
                       </ul>
                     </div>
+                    <div className="section">
+                      <h3>Evidence Quality</h3>
+                      <div className="small">{plan.evidenceQualityNote}</div>
+                    </div>
+                    {plan.literatureReferences.length ? (
+                      <div className="section">
+                        <h3>Literature References</h3>
+                        <ul className="list">
+                          {plan.literatureReferences.map((ref, index) => (
+                            <li key={index}>
+                              <span className="mono">PMID {ref.pmid}</span> — {ref.title}
+                              <div className="small">{ref.journal} ({ref.year})</div>
+                              <div className="small">{ref.relevanceNote}</div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
 
                 {activeTab === "protocol" ? (
                   <>
+                    <div className="section">
+                      <h3>Study Groups</h3>
+                      <ul className="list">
+                        <li>
+                          <span className="mono">Control Group ({plan.controlGroup.name})</span>
+                          <div className="small">{plan.controlGroup.description}</div>
+                          <div className="small">Intervention: {plan.controlGroup.intervention}</div>
+                          <div className="small">Sample size: {plan.controlGroup.sampleSize}</div>
+                        </li>
+                        <li>
+                          <span className="mono">Experimental Group ({plan.experimentalGroup.name})</span>
+                          <div className="small">{plan.experimentalGroup.description}</div>
+                          <div className="small">Intervention: {plan.experimentalGroup.intervention}</div>
+                          <div className="small">Sample size: {plan.experimentalGroup.sampleSize}</div>
+                        </li>
+                      </ul>
+                    </div>
                     <div className="section">
                       <h3>Step-by-step Protocol</h3>
                       <ol className="list">
