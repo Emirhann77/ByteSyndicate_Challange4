@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import re
 import urllib.parse
 import urllib.request
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()
 
@@ -80,6 +81,12 @@ class StudyGroup(BaseModel):
     sampleSize: str
 
 
+class Limitation(BaseModel):
+    title: str
+    description: str
+    mitigation: str
+
+
 class ExperimentPlan(BaseModel):
     refinedHypothesis: str
     experimentalDesign: str
@@ -98,14 +105,44 @@ class ExperimentPlan(BaseModel):
     nextQuestions: List[str] = Field(..., min_items=3)
     evidenceQualityNote: str
     literatureReferences: List[LiteratureReference] = Field(default_factory=list)
+    limitations: List[Limitation] = Field(..., min_items=3)
+    confidenceLevel: Literal["Very Low", "Low", "Medium", "High"]
+    confidenceRationale: str
     controlGroup: StudyGroup
     experimentalGroup: StudyGroup
 
 
 class HypothesisRequest(BaseModel):
-    hypothesis: str = Field(..., min_length=1)
-    useScientificLiterature: bool = False
+    """When suggest_only is true, hypothesis is ignored and the model only returns a draft hypothesis (UI pastes it; user runs full plan separately)."""
 
+    hypothesis: str = Field(default="", description="Required for full plans; ignored when suggest_only is true.")
+    useScientificLiterature: bool = False
+    suggest_only: bool = False
+
+    @model_validator(mode="after")
+    def _hypothesis_required_for_full_plan(self) -> "HypothesisRequest":
+        if not self.suggest_only and len(self.hypothesis.strip()) < 1:
+            raise ValueError("hypothesis is required when suggest_only is false")
+        return self
+
+
+class HypothesisSuggestion(BaseModel):
+    hypothesis: str = Field(
+        ...,
+        min_length=30,
+        max_length=1500,
+        description="One standalone testable hypothesis for experiment planning.",
+    )
+
+
+SUGGEST_HYPOTHESIS_SYSTEM = (
+    "You write concise, realistic scientific hypotheses suitable for a pilot experiment plan. "
+    "Each response is exactly one hypothesis: clear intervention or comparison, system or subjects, "
+    "measurable outcome, and at least one constraint (dose, duration, conditions, population, or control). "
+    "Vary scientific domains freely across calls (e.g. molecular biology, neuroscience, materials, ecology, "
+    "immunology, chemistry, physics, cognition). "
+    "Output only the structured field—no labels, numbering, markdown, or preamble."
+)
 
 SYSTEM_PROMPT = (
     "You are an elite scientific program manager helping teams ship executable experiments quickly. "
@@ -116,7 +153,9 @@ SYSTEM_PROMPT = (
     "All costs must be in USD and feasibilityScore must reflect practical deliverability. "
     "Default to small pilot-scale studies unless the user explicitly requests large-scale execution. "
     "For typical classroom/lab pilot designs, keep total budget in a realistic low range and justify it. "
-    "Always define explicit controlGroup and experimentalGroup with clear interventions and sample sizes."
+    "Always define explicit controlGroup and experimentalGroup with clear interventions and sample sizes. "
+    "Always include limitations describing uncertainty, assumptions, and what would invalidate the plan. "
+    "Set confidenceLevel to match feasibilityScore bands: 85+ High, 65–84 Medium, 45–64 Low, 0–44 Very Low."
 )
 
 app = FastAPI(title="Experiment Planning API", version="2.0.0")
@@ -135,12 +174,37 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
 )
 
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = os.getenv("MODEL_NAME", "gpt-4o")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL_NAME", "gpt-4o-mini")
+
+# Stable ID for the frontend to detect this process vs. any other server on the same port.
+EXPERIMENT_API_SERVICE_ID = "byte-syndicate-experiment-api"
+EXPERIMENT_API_VERSION = 2
+
+
+@app.get("/")
+def read_root() -> dict:
+    return {
+        "service": EXPERIMENT_API_SERVICE_ID,
+        "version": EXPERIMENT_API_VERSION,
+        "endpoints": {
+            "health": "/health",
+            "docs": "/docs",
+            "generatePlan": "POST /generate-plan",
+            "suggestHypothesis": "POST /suggest-hypothesis",
+        },
+    }
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "endpoints": {
+            "generatePlan": True,
+            "suggestHypothesis": True,
+        },
+    }
 
 
 def _raise_harmful_prompt_error() -> None:
@@ -148,6 +212,53 @@ def _raise_harmful_prompt_error() -> None:
         status_code=400,
         detail="This request is harmful or unsafe. I cannot provide a response for it.",
     )
+
+
+def _is_model_access_or_rate_issue(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "ratelimit" in lowered
+        or "rate limit" in lowered
+        or "unauthorized" in lowered
+        or "bad credentials" in lowered
+        or "insufficient_quota" in lowered
+        or "forbidden" in lowered
+    )
+
+
+def _is_explicit_safety_policy_block(message: str) -> bool:
+    lowered = message.lower()
+    if "responsibleaipolicyviolation" in lowered:
+        return True
+    if "content_filter" in lowered and any(
+        token in lowered
+        for token in ["violence", "sexual", "self-harm", "hate", "jailbreak", "unsafe", "policy"]
+    ):
+        return True
+    return False
+
+
+def _parse_with_model_fallback(messages: List[dict], response_format):
+    models_to_try = [DEFAULT_MODEL]
+    if FALLBACK_MODEL and FALLBACK_MODEL not in models_to_try:
+        models_to_try.append(FALLBACK_MODEL)
+
+    last_exc: Exception | None = None
+    for index, model in enumerate(models_to_try):
+        try:
+            return client.beta.chat.completions.parse(
+                model=model,
+                messages=messages,
+                response_format=response_format,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if index < len(models_to_try) - 1 and _is_model_access_or_rate_issue(str(exc)):
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("No model configured for completion parsing.")
 
 
 def _fetch_pubmed_references(query: str, max_items: int = 5) -> List[dict]:
@@ -358,9 +469,84 @@ def _apply_general_calibration(parsed: ExperimentPlan, hypothesis: str) -> None:
     parsed.feasibilityScore = int(max(8, min(95, round(calibrated_score))))
 
 
-@app.post("/generate-plan", response_model=ExperimentPlan)
-def generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
+def _derive_confidence_from_feasibility(
+    feasibility_score: int,
+) -> tuple[Literal["Very Low", "Low", "Medium", "High"], str]:
+    if feasibility_score >= 85:
+        return (
+            "High",
+            "High confidence aligns with a strong feasibility score (85+): clearer scope and fewer blocking unknowns.",
+        )
+    if feasibility_score >= 65:
+        return (
+            "Medium",
+            "Medium confidence aligns with mid-range feasibility (65–84): several assumptions still need validation.",
+        )
+    if feasibility_score >= 45:
+        return (
+            "Low",
+            "Low confidence aligns with weaker feasibility (45–64): material risks, cost, or execution gaps are likely.",
+        )
+    return (
+        "Very Low",
+        "Very low confidence aligns with low feasibility (0–44): major uncertainty, heavy assumptions, or a fragile pilot path.",
+    )
+
+
+def _llm_suggest_hypothesis() -> HypothesisSuggestion:
+    diversity = random.randint(1, 1_000_000_000)
     try:
+        response = _parse_with_model_fallback(
+            messages=[
+                {"role": "system", "content": SUGGEST_HYPOTHESIS_SYSTEM},
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate ONE novel hypothesis for the textarea. "
+                        f"Diversity token (ignore semantically): {diversity}. "
+                        "Avoid generic one-liners; include enough detail to plan a small study."
+                    ),
+                },
+            ],
+            response_format=HypothesisSuggestion,
+        )
+        parsed = response.choices[0].message.parsed
+        if parsed is None:
+            refusal = getattr(response.choices[0].message, "refusal", None)
+            if refusal:
+                _raise_harmful_prompt_error()
+            raise HTTPException(
+                status_code=502,
+                detail="Model returned an invalid response format. Please retry.",
+            )
+        text = parsed.hypothesis.strip()
+        if len(text) < 30:
+            raise HTTPException(
+                status_code=502,
+                detail="Suggested hypothesis was too short. Please retry.",
+            )
+        return HypothesisSuggestion(hypothesis=text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        message = str(exc)
+        if "content_filter" in message or "ResponsibleAIPolicyViolation" in message:
+            _raise_harmful_prompt_error()
+        raise HTTPException(status_code=500, detail=f"Failed to suggest hypothesis: {exc}") from exc
+
+
+@app.post("/suggest-hypothesis", response_model=HypothesisSuggestion)
+def suggest_hypothesis() -> HypothesisSuggestion:
+    return _llm_suggest_hypothesis()
+
+
+@app.post("/generate-plan", response_model=None)
+def generate_plan(payload: HypothesisRequest):
+    try:
+        if payload.suggest_only:
+            suggestion = _llm_suggest_hypothesis()
+            return suggestion.model_dump()
+
         references = _fetch_pubmed_references(payload.hypothesis) if payload.useScientificLiterature else []
         literature_context = ""
         if payload.useScientificLiterature:
@@ -382,8 +568,7 @@ def generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
                     "Be conservative and explicitly note evidence limitations."
                 )
 
-        response = client.beta.chat.completions.parse(
-            model=DEFAULT_MODEL,
+        response = _parse_with_model_fallback(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -434,11 +619,22 @@ def generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
 
         _enforce_budget_sanity(parsed, payload.hypothesis)
         _apply_general_calibration(parsed, payload.hypothesis)
+        confidence_level, confidence_rationale = _derive_confidence_from_feasibility(parsed.feasibilityScore)
+        parsed.confidenceLevel = confidence_level
+        parsed.confidenceRationale = confidence_rationale
         return parsed
     except HTTPException:
         raise
     except Exception as exc:
         message = str(exc)
-        if "content_filter" in message or "ResponsibleAIPolicyViolation" in message:
+        if _is_explicit_safety_policy_block(message):
             _raise_harmful_prompt_error()
+        if _is_model_access_or_rate_issue(message):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Model access/rate issue on current key for primary model. "
+                    "Fallback was attempted. Try again in a minute or use a key with available quota."
+                ),
+            ) from exc
         raise HTTPException(status_code=500, detail=f"Failed to generate plan: {exc}")
