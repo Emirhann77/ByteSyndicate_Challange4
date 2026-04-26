@@ -181,6 +181,27 @@ FALLBACK_MODEL = os.getenv("FALLBACK_MODEL_NAME", "gpt-4o-mini")
 EXPERIMENT_API_SERVICE_ID = "byte-syndicate-experiment-api"
 EXPERIMENT_API_VERSION = 2
 
+OFFLINE_HYPOTHESIS_FALLBACK = (
+    "Applying a 15-minute blue-light pulse (470 nm) at dawn increases stomatal conductance "
+    "in Arabidopsis thaliana by at least 20% compared with dark-control plants measured one "
+    "hour later under fixed humidity and temperature."
+)
+
+
+def _has_configured_api_key() -> bool:
+    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not key:
+        return False
+    # Guard against common placeholder values accidentally committed to local .env files.
+    blocked_values = {
+        "your_key_here",
+        "your_openai_api_key_here",
+        "replace_me",
+        "none",
+        "null",
+    }
+    return key.lower() not in blocked_values
+
 
 @app.get("/")
 def read_root() -> dict:
@@ -493,6 +514,189 @@ def _derive_confidence_from_feasibility(
     )
 
 
+def _offline_suggest_hypothesis() -> HypothesisSuggestion:
+    return HypothesisSuggestion(hypothesis=OFFLINE_HYPOTHESIS_FALLBACK)
+
+
+def _offline_generate_plan(payload: HypothesisRequest) -> ExperimentPlan:
+    text = payload.hypothesis.strip() or OFFLINE_HYPOTHESIS_FALLBACK
+    control_group = StudyGroup(
+        name="Control",
+        description="Baseline group with no intervention.",
+        intervention="No blue-light pulse at dawn.",
+        sampleSize="n=24 plants",
+    )
+    experimental_group = StudyGroup(
+        name="Experimental",
+        description="Intervention group receiving the treatment.",
+        intervention="15-minute 470 nm blue-light pulse at dawn.",
+        sampleSize="n=24 plants",
+    )
+    plan = ExperimentPlan(
+        refinedHypothesis=text,
+        experimentalDesign=(
+            "Randomized pilot study comparing treated vs. untreated plants under fixed growth conditions."
+        ),
+        protocolSteps=[
+            "Grow Arabidopsis thaliana under standardized temperature, humidity, and photoperiod.",
+            "Randomly assign plants into control and experimental groups with equal counts.",
+            "Apply a 15-minute 470 nm blue-light pulse at dawn to the experimental group only.",
+            "Keep all other environmental conditions identical for both groups.",
+            "Measure stomatal conductance one hour after dawn using the same instrument settings.",
+            "Repeat measurements across multiple days and aggregate replicate-level data.",
+            "Compare groups using pre-defined statistical analysis.",
+        ],
+        materials=[
+            MaterialItem(
+                item="Arabidopsis thaliana seedlings",
+                quantity="48 plants",
+                notes="Same growth stage for all replicates.",
+                estimatedPriceUsd=60.0,
+            ),
+            MaterialItem(
+                item="Blue LED source (470 nm)",
+                quantity="1 unit",
+                notes="Timer-controlled illumination for intervention.",
+                estimatedPriceUsd=120.0,
+            ),
+            MaterialItem(
+                item="Growth chamber access",
+                quantity="1 week",
+                notes="Controlled humidity/temperature conditions.",
+                estimatedPriceUsd=80.0,
+            ),
+            MaterialItem(
+                item="Stomatal conductance meter access",
+                quantity="1 week",
+                notes="Consistent instrument and operator for all reads.",
+                estimatedPriceUsd=90.0,
+            ),
+        ],
+        estimatedCostUsd=CostRange(
+            low=250.0,
+            high=450.0,
+            notes="Demo-mode estimate for a small pilot setup.",
+        ),
+        timeline=[
+            TimelinePhase(phase="Setup", duration="2 days", deliverable="Plants and equipment prepared."),
+            TimelinePhase(phase="Intervention", duration="4 days", deliverable="Blue-light treatment executed."),
+            TimelinePhase(phase="Analysis", duration="2 days", deliverable="Conductance comparison and summary."),
+        ],
+        feasibilityScore=78,
+        feasibilityRationale=[
+            "Pilot scope is small and operationally manageable.",
+            "Equipment and materials are standard in teaching/research labs.",
+            "Outcome metric is measurable with a clear endpoint.",
+        ],
+        riskLevel="Medium",
+        safetyEthics=SafetyEthics(
+            considerations=[
+                "Follow electrical and light-source safety protocols in the lab.",
+                "Prevent cross-condition contamination by keeping treatment groups separated.",
+            ],
+            approvals=["Institutional lab safety compliance check."],
+        ),
+        failureModes=[
+            FailureMode(
+                risk="Uneven plant baseline health masks intervention effects.",
+                mitigation="Screen and randomize plants by baseline condition before assignment.",
+            ),
+            FailureMode(
+                risk="Light exposure variability across replicates.",
+                mitigation="Use fixed distance and calibrated intensity during every pulse.",
+            ),
+            FailureMode(
+                risk="Measurement noise from inconsistent handling.",
+                mitigation="Use one operator and a standardized measurement protocol.",
+            ),
+        ],
+        alternatives=[
+            AlternativePlan(
+                name="Dose response variant",
+                summary="Compare 5, 10, and 15-minute pulse durations.",
+                costImpact="Slight increase due to additional runs.",
+                timelineImpact="Adds 2-3 days.",
+                tradeoffs=["Richer insight", "Higher execution complexity"],
+            ),
+            AlternativePlan(
+                name="Different wavelength control",
+                summary="Add red-light treatment arm to test wavelength specificity.",
+                costImpact="Requires extra light setup.",
+                timelineImpact="Adds 2 days.",
+                tradeoffs=["Stronger causal interpretation", "More logistics"],
+            ),
+            AlternativePlan(
+                name="Different species replication",
+                summary="Repeat in a second model species for external validity.",
+                costImpact="Higher material usage.",
+                timelineImpact="Adds 4-5 days.",
+                tradeoffs=["Better generalization", "Longer timeline"],
+            ),
+        ],
+        staffingPlan=[
+            StaffingItem(
+                role="Research Assistant",
+                headcount=1,
+                hoursPerWeek=8,
+                responsibilities="Run treatments, collect measurements, maintain logs.",
+            ),
+            StaffingItem(
+                role="Project Lead",
+                headcount=1,
+                hoursPerWeek=3,
+                responsibilities="Review design quality and validate analysis decisions.",
+            ),
+        ],
+        statisticsPlan=StatisticsPlan(
+            primaryEndpoint="Mean stomatal conductance at +1 hour post-dawn.",
+            suggestedReplicates="At least 3 independent runs.",
+            analysisMethod="Two-sample t-test or non-parametric equivalent if assumptions fail.",
+            powerNotes="Pilot-scale estimate; expand sample size after variance estimation.",
+        ),
+        nextQuestions=[
+            "Does treatment effect persist across multiple days?",
+            "What is the minimum effective pulse duration?",
+            "How sensitive is the effect to humidity fluctuations?",
+        ],
+        evidenceQualityNote=(
+            "Offline demo mode: generated without live model or literature API calls. "
+            "Use as a starter template and validate experimentally."
+        ),
+        literatureReferences=[],
+        limitations=[
+            Limitation(
+                title="Offline template mode",
+                description="Plan is generated from a deterministic fallback when no API key is configured.",
+                mitigation="Add a valid OPENAI_API_KEY in .env for adaptive model-generated plans.",
+            ),
+            Limitation(
+                title="Domain mismatch risk",
+                description="Fallback content may not perfectly match every input hypothesis domain.",
+                mitigation="Use as a structural baseline and manually adjust domain-specific details.",
+            ),
+            Limitation(
+                title="Pilot-only budget",
+                description="Cost and staffing assume small-scale execution.",
+                mitigation="Re-estimate with local prices and scaling needs.",
+            ),
+        ],
+        confidenceLevel="Medium",
+        confidenceRationale=(
+            "Fallback confidence is fixed for offline demo mode and should be re-evaluated with live model output."
+        ),
+        controlGroup=control_group,
+        experimentalGroup=experimental_group,
+    )
+    _enforce_budget_sanity(plan, text)
+    _apply_general_calibration(plan, text)
+    confidence_level, confidence_rationale = _derive_confidence_from_feasibility(plan.feasibilityScore)
+    plan.confidenceLevel = confidence_level
+    plan.confidenceRationale = confidence_rationale
+    if payload.useScientificLiterature:
+        plan.evidenceQualityNote += " Literature toggle was enabled, but offline mode does not retrieve citations."
+    return plan
+
+
 def _llm_suggest_hypothesis() -> HypothesisSuggestion:
     diversity = random.randint(1, 1_000_000_000)
     try:
@@ -537,6 +741,8 @@ def _llm_suggest_hypothesis() -> HypothesisSuggestion:
 
 @app.post("/suggest-hypothesis", response_model=HypothesisSuggestion)
 def suggest_hypothesis() -> HypothesisSuggestion:
+    if not _has_configured_api_key():
+        return _offline_suggest_hypothesis()
     return _llm_suggest_hypothesis()
 
 
@@ -544,8 +750,12 @@ def suggest_hypothesis() -> HypothesisSuggestion:
 def generate_plan(payload: HypothesisRequest):
     try:
         if payload.suggest_only:
+            if not _has_configured_api_key():
+                return _offline_suggest_hypothesis().model_dump()
             suggestion = _llm_suggest_hypothesis()
             return suggestion.model_dump()
+        if not _has_configured_api_key():
+            return _offline_generate_plan(payload)
 
         references = _fetch_pubmed_references(payload.hypothesis) if payload.useScientificLiterature else []
         literature_context = ""

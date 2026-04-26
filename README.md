@@ -58,6 +58,32 @@ npm run dev
 
 `http://localhost:5173`
 
+## Judge Quick Start (60-second setup)
+
+Use this when someone just cloned and wants a reliable demo quickly:
+
+```bash
+git clone https://github.com/Emirhann77/ByteSyndicate_Challange4.git
+cd ByteSyndicate_Challange4
+cd frontend && npm install && cd ..
+python dev_start.py
+```
+
+In a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+### Important
+
+- If `OPENAI_API_KEY` is present in root `.env`, the app uses live model generation.
+- If API key is missing, the backend now uses a built-in **offline demo fallback** so the UI still generates a complete plan.
+- No secrets are committed: `.env` and `.env.local` remain gitignored.
+
 ## Manual Backend Start (Alternative)
 
 If you want a fixed port:
@@ -89,6 +115,8 @@ Restart Vite after changing `.env.local`.
   - Stop stale local processes using the same port, or let `dev_start.py` select a new one.
 - **Model access / quota errors**
   - Verify `OPENAI_API_KEY` is valid and has quota.
+- **`OPENAI_API_KEY` missing**
+  - App still works in offline demo fallback mode, but outputs are template-style and not model-generated.
 - **Frontend still using old config**
   - Hard refresh browser (`Ctrl+F5`) after backend URL changes.
 
