@@ -1,18 +1,98 @@
-# ByteSyndicate_Challange4
+# ByteSyndicate Challenge 4
 
-## Frontend (React)
+Hackathon app for generating experiment plans from a scientific hypothesis.
 
-The React demo UI lives in `frontend/`.
+- **Frontend:** React + Vite (`frontend/`)
+- **Backend:** FastAPI (`main.py`)
+- **AI provider:** OpenAI-compatible endpoint (key from `.env`)
 
-### Run locally
+## Prerequisites
+
+- Python `3.10+`
+- Node.js `18+` and npm
+
+## Environment Setup
+
+Create a root `.env` file:
+
+```bash
+OPENAI_API_KEY=your_key_here
+```
+
+Optional model overrides:
+
+```bash
+MODEL_NAME=gpt-4o
+FALLBACK_MODEL_NAME=gpt-4o-mini
+```
+
+## Quick Start (Recommended)
+
+1) Install frontend dependencies:
 
 ```bash
 cd frontend
 npm install
+cd ..
+```
+
+2) Start backend with safe port sync:
+
+```bash
+python dev_start.py
+```
+
+What this does:
+- chooses a free backend port (prefers `8000-8008` and `8010`, then `8011-8100`)
+- writes `frontend/.env.local` with the selected backend URL
+- starts FastAPI on that same port
+
+3) In another terminal, start frontend:
+
+```bash
+cd frontend
 npm run dev
 ```
 
-### FastAPI integration later
+4) Open:
 
-The app calls `createExperimentPlanClient().generatePlan()` in `frontend/src/lib/experimentPlanClient.ts`.
-Replace the mock implementation with a `fetch()` call to your FastAPI endpoint and keep the UI unchanged.
+`http://localhost:5173`
+
+## Manual Backend Start (Alternative)
+
+If you want a fixed port:
+
+```bash
+python -m uvicorn main:app --host 127.0.0.1 --port 8010
+```
+
+Then set `frontend/.env.local`:
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8010
+```
+
+Restart Vite after changing `.env.local`.
+
+## API Endpoints
+
+- `GET /` service metadata
+- `GET /health` health check
+- `POST /generate-plan` generate a full plan
+- `POST /suggest-hypothesis` generate a sample hypothesis
+
+## Troubleshooting
+
+- **"Unable to generate plan from scanned backends"**
+  - Backend URL mismatch is likely. Re-run `python dev_start.py`, then restart Vite.
+- **Port already in use**
+  - Stop stale local processes using the same port, or let `dev_start.py` select a new one.
+- **Model access / quota errors**
+  - Verify `OPENAI_API_KEY` is valid and has quota.
+- **Frontend still using old config**
+  - Hard refresh browser (`Ctrl+F5`) after backend URL changes.
+
+## Notes
+
+- `.env` and `.env.local` are intentionally ignored by git.
+- `frontend/node_modules` should not be committed.
